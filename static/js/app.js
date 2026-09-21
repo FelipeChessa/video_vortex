@@ -225,6 +225,7 @@
     state.script = window.VVScript.generate(
       state.info, state.photos, state.tone, state.duration, state.variant
     );
+    tts.totalSegundos = 0; // roteiro novo: a duração medida do anterior não vale mais
     renderScript();
   }
 
@@ -242,23 +243,223 @@
     if (!s) return;
     $("scriptOut").value = scriptText();
     $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === state.tab));
-    $("scriptMeta").textContent =
-      `Tom: ${s.tone} · ~${s.targetSeconds}s de vídeo · ${s.wordCount} palavras · leitura ~${s.readSeconds}s`;
+    atualizarMetaRoteiro();
   }
 
-  function speak(text) {
-    try {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = "pt-BR";
-      u.rate = 1.02;
-      const voices = speechSynthesis.getVoices();
-      const br = voices.find((v) => /pt[-_]BR/i.test(v.lang));
-      if (br) u.voice = br;
-      speechSynthesis.speak(u);
-    } catch (e) {
-      toast("Narração indisponível neste navegador.", false);
+  function atualizarMetaRoteiro() {
+    const s = state.script;
+    if (!s) return;
+    // "a narração dita o tempo": quando a duração real já foi medida, ela aparece
+    // ao lado das estimativas — é ela que manda no vídeo.
+    const medida = tts.totalSegundos ? ` · narração medida: ${tts.totalSegundos.toFixed(1)}s` : "";
+    $("scriptMeta").textContent =
+      `Tom: ${s.tone} · ~${s.targetSeconds}s de vídeo · ${s.wordCount} palavras · ` +
+      `leitura ~${s.readSeconds}s${medida}`;
+  }
+
+  // ------------------------- narração --------------------------------------
+  //
+  // A narração roda no SERVIDOR (voz neural, um áudio por trecho, cacheado em
+  // disco) porque a duração real de cada áudio é o que dita o tempo do vídeo — o
+  // navegador não tem como medir isso antes de tocar.
+  //
+  // A voz do próprio navegador (SpeechSynthesis) continua aqui como plano B: se o
+  // servidor não responder, o botão ainda fala em vez de não fazer nada.
+  const tts = { info: null, audio: null, parar: false, totalSegundos: 0, carregando: false };
+
+  function ttsAudio() {
+    if (!tts.audio) tts.audio = $("ttsAudio");
+    return tts.audio;
+  }
+
+  function ttsStatus(msg, classe) {
+    const el = $("ttsStatus");
+    if (!el) return;
+    if (msg) {
+      el.className = "tts-status" + (classe ? " " + classe : "");
+      el.textContent = msg;
+      return;
     }
+    if (!tts.info) {
+      el.className = "tts-status";
+      el.textContent = "voz do navegador (servidor de narração indisponível)";
+      return;
+    }
+    el.className = "tts-status" + (tts.info.mock ? " mock" : "");
+    el.textContent = tts.info.mock
+      ? "⚠ voz de teste — sem voz neural no servidor"
+      : "voz neural pronta";
+  }
+
+  async function carregarVozes() {
+    try {
+      const r = await fetch("/api/narrate/voices", { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      tts.info = await r.json();
+      const sel = $("ttsVoice");
+      sel.innerHTML = "";
+      tts.info.voices.forEach((v) => {
+        const opt = document.createElement("option");
+        opt.value = v.id;
+        opt.textContent = v.label;
+        sel.appendChild(opt);
+      });
+      sel.value = tts.info.default_voice;
+    } catch (e) {
+      tts.info = null;
+    }
+    ttsStatus();
+  }
+
+  function pararFala() {
+    tts.parar = true;
+    try {
+      const a = ttsAudio();
+      a.pause();
+      a.removeAttribute("src");
+    } catch (e) {}
+    try { speechSynthesis.cancel(); } catch (e) {}
+  }
+
+  /** Toca uma URL de áudio e resolve quando termina. */
+  function tocar(url) {
+    return new Promise((resolve, reject) => {
+      const a = ttsAudio();
+      a.onended = () => resolve();
+      a.onerror = () => reject(new Error("não consegui tocar o áudio"));
+      a.src = url;
+      const p = a.play();
+      if (p && p.catch) p.catch(reject);
+    });
+  }
+
+  /** Fala pelo navegador (plano B quando o servidor não responde). */
+  function falarNoNavegador(texto) {
+    return new Promise((resolve) => {
+      try {
+        speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(texto);
+        u.lang = "pt-BR";
+        u.rate = 1.02;
+        const br = speechSynthesis.getVoices().find((v) => /pt[-_]BR/i.test(v.lang));
+        if (br) u.voice = br;
+        u.onend = () => resolve();
+        u.onerror = () => resolve();
+        speechSynthesis.speak(u);
+      } catch (e) {
+        resolve();
+      }
+    });
+  }
+
+  async function narrarTrecho(texto, voz) {
+    // O verbalizer roda ANTES do TTS: é ele que troca "78 m² · R$ 650.000" pelo que
+    // deve ser falado. Sem isso a voz lê "meme ao quadrado" e "erre cifrão".
+    const limpo = window.VVScript ? VVScript.verbalize(texto) : texto;
+    const r = await fetch("/api/narrate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: limpo, voice: voz }),
+    });
+    if (!r.ok) {
+      const erro = await r.json().catch(() => ({}));
+      throw new Error(erro.error || "HTTP " + r.status);
+    }
+    return r.json();
+  }
+
+  /** Narra o roteiro inteiro: um áudio por linha falada, na ordem. */
+  async function narrarRoteiro() {
+    const s = state.script;
+    if (!s) {
+      toast("Gere um roteiro primeiro.", false);
+      return;
+    }
+    if (tts.carregando) {
+      pararFala();
+      return;
+    }
+    if (!tts.info) await carregarVozes();
+    if (!tts.info) {
+      ttsStatus();
+      await falarNoNavegador(scriptText());
+      return;
+    }
+
+    const linhas = (s.lines && s.lines.length ? s.lines : []).map((l, i) => ({
+      id: "l" + i,
+      text: window.VVScript ? VVScript.verbalize(l.text) : l.text,
+    }));
+    const segmentos = linhas.length
+      ? linhas
+      : [{ id: "full", text: VVScript.verbalize(scriptText()) }];
+
+    pararFala();
+    tts.parar = false;
+    tts.carregando = true;
+    $("btnSpeak").textContent = "⏳ Preparando narração…";
+    try {
+      const r = await fetch("/api/narrate/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ segments: segmentos, voice: $("ttsVoice").value }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const dados = await r.json();
+      tts.totalSegundos = dados.total_duration;
+      atualizarMetaRoteiro();
+
+      for (let i = 0; i < dados.segments.length; i++) {
+        if (tts.parar) break;
+        $("btnSpeak").textContent = `🔊 ${i + 1}/${dados.segments.length}…`;
+        await tocar(dados.segments[i].url);
+      }
+      ttsStatus(
+        dados.mock
+          ? "narração de teste concluída (sem voz neural no servidor)"
+          : `narração concluída · ${dados.total_duration.toFixed(1)}s`,
+        dados.mock ? "mock" : null
+      );
+    } catch (e) {
+      ttsStatus("servidor não respondeu — falando pela voz do navegador", "erro");
+      await falarNoNavegador(scriptText());
+    } finally {
+      tts.carregando = false;
+      $("btnSpeak").textContent = "🔊 Ouvir narração";
+    }
+  }
+
+  /** Amostra curta da voz escolhida (o botão 🎧). */
+  async function amostraDaVoz() {
+    if (!tts.info) await carregarVozes();
+    if (!tts.info) {
+      ttsStatus("sem servidor de narração — amostra indisponível", "erro");
+      toast("O servidor de narração não respondeu.", false);
+      return;
+    }
+    pararFala();
+    tts.parar = false;
+    const frase =
+      "Olá! Esta é a voz da narração do seu tour. Apartamento de 78 metros quadrados, " +
+      "2 quartos, R$ 650.000 — com varanda gourmet e uma vaga.";
+    $("btnVoiceSample").textContent = "⏳ …";
+    try {
+      const res = await narrarTrecho(frase, $("ttsVoice").value);
+      await tocar(res.url);
+      ttsStatus(
+        `amostra de ${res.duration.toFixed(1)}s${res.cached ? " (cache)" : ""}`,
+        res.fallback ? "mock" : null
+      );
+    } catch (e) {
+      ttsStatus("não consegui gerar a amostra: " + e.message, "erro");
+    } finally {
+      $("btnVoiceSample").textContent = "🎧 Amostra da voz";
+    }
+  }
+
+  /** Mantido para o plano B e para outros pontos do app. */
+  function speak(text) {
+    falarNoNavegador(text);
   }
 
   // ------------------------- tour -----------------------------------------
@@ -337,6 +538,7 @@
     }
     if (!state.script) {
       state.script = window.VVScript.generate(state.info, state.photos, state.tone, state.duration, state.variant);
+      tts.totalSegundos = 0;
     }
     state.recording = true;
     $("btnRecord").disabled = true;
@@ -528,8 +730,14 @@
       try { await navigator.clipboard.writeText($("scriptOut").value); toast("Roteiro copiado ✓"); }
       catch (e) { $("scriptOut").select(); document.execCommand("copy"); toast("Roteiro copiado ✓"); }
     });
-    $("btnSpeak").addEventListener("click", () => speak($("scriptOut").value));
-    $("btnStopSpeak").addEventListener("click", () => { try { speechSynthesis.cancel(); } catch (e) {} });
+    $("btnSpeak").addEventListener("click", narrarRoteiro);
+    $("btnStopSpeak").addEventListener("click", () => {
+      pararFala();
+      $("btnSpeak").textContent = "🔊 Ouvir narração";
+      tts.carregando = false;
+    });
+    $("btnVoiceSample").addEventListener("click", amostraDaVoz);
+    $("ttsVoice").addEventListener("change", () => ttsStatus());
     $("btnDlScript").addEventListener("click", () => {
       const url = URL.createObjectURL(new Blob([$("scriptOut").value], { type: "text/plain;charset=utf-8" }));
       download(url, "roteiro-videovortex.txt");
@@ -579,6 +787,9 @@
     loadProjectList();
 
     if ("speechSynthesis" in window) speechSynthesis.getVoices();
+
+    // narração: descobre o backend e as vozes, e mostra o estado (mock é avisado)
+    carregarVozes();
 
     // staging fotográfico: carrega layouts + cutouts em segundo plano. Enquanto
     // não chegam, o draw() usa a camada procedural — nada bloqueia a interface.

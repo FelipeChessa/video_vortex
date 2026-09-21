@@ -28,6 +28,11 @@ python app.py
 
 > Sem fotos em mãos? Na etapa 1, clique em **“🎲 Gerar fotos demo”** — o app cria 4 ambientes procedurais para testar o fluxo completo.
 
+> **Voz da narração:** com `pip install edge-tts` (já vem no `requirements.txt`) e
+> internet, a narração sai em voz neural PT-BR. Sem internet, o app cai sozinho para
+> uma voz de teste local e avisa na tela — nada quebra. Para forçar a voz de teste:
+> `VV_MOCK_TTS=1 python app.py`.
+
 ## 🧭 Fluxo de uso
 
 | Etapa | O que fazer |
@@ -44,7 +49,8 @@ Os projetos podem ser **salvos no servidor** (botão 💾 no topo) e reabertos d
 
 ```
 video_vortex/
-├── app.py                  # backend Flask (serve o front + API de projetos)
+├── app.py                  # backend Flask (front + API de projetos + narração)
+├── narrate.py              # narração: edge-tts/piper/mock, cache, duração real
 ├── templates/index.html    # SPA (5 etapas)
 ├── static/
 │   ├── css/styles.css      # tema escuro próprio (sem framework)
@@ -54,7 +60,7 @@ video_vortex/
 │       ├── staging.js      # staging virtual em canvas (4 estilos × 7 ambientes)
 │       ├── tour.js         # viewer com panorâmica 360° simulada
 │       ├── video.js        # render Ken Burns + MediaRecorder + trilha WebAudio + SRT
-│       └── demo.js         # fotos demo procedurais
+│       └── demo.js         # fotos demo procedurais (inclui scriptgen.verbalize)
 │   └── assets/
 │       ├── layouts.json    # layout do staging fotográfico (fonte de verdade)
 │       ├── *.png           # cutouts de mobiliário (PNG com alpha)
@@ -62,7 +68,7 @@ video_vortex/
 ├── tools/
 │   ├── make_assets.py      # recorte fundo branco → PNG com alpha
 │   └── preview_staging.py  # conferidor do layout em PIL (sem navegador)
-├── data/                   # projetos salvos (projects.json)
+├── data/                   # projects.json + audio/ (cache de narração)
 └── tests/                  # API, assets, layout e geometria (pytest)
 ```
 
@@ -76,6 +82,10 @@ video_vortex/
 | `GET` | `/api/projects/<id>` | recupera projeto completo |
 | `PUT` | `/api/projects/<id>` | atualiza projeto |
 | `DELETE` | `/api/projects/<id>` | exclui projeto |
+| `GET` | `/api/narrate/voices` | backend de voz ativo, vozes e estado do cache |
+| `POST` | `/api/narrate` | narra **um trecho** e devolve a duração medida |
+| `POST` | `/api/narrate/batch` | narra o roteiro inteiro (um áudio por trecho) |
+| `GET` | `/api/audio/<chave>` | serve o áudio do cache |
 
 ## 🪑 Staging fotográfico
 
@@ -172,12 +182,85 @@ python tools/make_assets.py --preview   # recorta tudo + gera a prancha de confe
 python tools/make_assets.py --only vase-decor
 ```
 
+## 🎙 Narração neural
+
+A narração é **a única parte que faz trabalho pesado no servidor** — e por um motivo
+específico: a **duração real** de cada trecho é o dado que dita o tempo do vídeo. O
+navegador não tem como medir isso antes de tocar, então quem sintetiza, mede e
+guarda o áudio é o `narrate.py`.
+
+Três backends, escolhidos na hora:
+
+| backend | quando entra | observação |
+|---------|--------------|------------|
+| **edge** | pacote `edge-tts` instalado | vozes neurais da Microsoft — **precisa de internet** (caminho de produção) |
+| **piper** | binário `piper` no PATH + modelo `.onnx` | offline, sem rede nenhuma |
+| **mock** | nenhum dos dois, ou `VV_MOCK_TTS=1` | tom sintético com duração proporcional ao texto |
+
+`VV_TTS_BACKEND` força a escolha. Se o backend neural falhar (sem internet, por
+exemplo), a síntese **cai para o mock**, marcando `fallback: true` e o motivo na
+resposta: melhor uma voz de teste do que um vídeo sem narração. A falha fica
+lembrada em memória, então o roteiro de 30 trechos não paga 30 vezes o timeout da
+rede. A interface avisa na tela quando a voz é de teste.
+
+### Cache
+
+`data/audio/<chave>.mp3|wav` mais um `<chave>.json` com os metadados. A chave é o
+sha1 de `backend|voz|rate|pitch|texto` — mudar qualquer um dos cinco gera outro
+áudio. Isso importa porque o roteiro é **regerado a cada ajuste de tom ou duração**:
+sem cache seriam dezenas de chamadas de rede por clique, e com cache o custo de
+regerar é ler um arquivo de metadados. O cache não é versionado (`data/audio/` está
+no `.gitignore`).
+
+### Duração sem dependência externa
+
+O sandbox não tem ffmpeg, e a duração é justamente o dado que o vídeo precisa.
+Então: WAV pelo módulo `wave` da biblioteca padrão e MP3 por um **leitor de quadros
+próprio** que soma `amostras / taxa` quadro a quadro — nada de estimar por bitrate
+médio, que erra em arquivo VBR. O leitor cobre MPEG 1/2/2.5 camadas I–III, pula
+etiqueta ID3v2 e re-sincroniza sozinho depois de bytes soltos. Os testes exercitam
+esses casos com MP3 construído à mão, quadro a quadro.
+
+### Verbalizer: o que a voz **não** sabe ler
+
+O roteiro é escrito para ser **lido** na tela e depois **falado**. São coisas
+diferentes: na tela "78 m² · R$ 650.000" é o que o corretor quer ver; no ouvido, a
+voz lê "meme ao quadrado" se ninguém traduzir antes. O `VVScript.verbalize()`
+resolve isso (R$, m², m³, km, kg, %, (s) do plural, apto/qto/WC, sr./sra.) e roda
+**antes** do texto virar áudio.
+
+A decisão menos óbvia está no que ele **não** converte: algarismo solto fica
+algarismo. Em português o numeral concorda em gênero com o substantivo — "1 vaga" é
+"uma vaga", "2 vagas" é "duas vagas", "200 vagas" é "duzentas vagas" — e a voz
+neural acerta isso sozinha, enquanto uma tabela nossa escreveria "um vaga". Número
+por extenso continua existindo onde o gênero é nosso e conhecido: o valor em reais
+(sempre masculino) e os centavos. Há teste travando essa decisão, para não ser
+"corrigida" sem querer.
+
+### Na interface
+
+O botão **🎧 Amostra da voz** fala uma frase curta com a voz escolhida, e o
+**🔊 Ouvir narração** narra o roteiro inteiro, um áudio por linha falada, na ordem.
+Depois disso, a duração medida aparece na linha de informações do roteiro — é o
+"narração dita o tempo" começando na interface. Se o servidor não responder, a
+narração continua pela voz do próprio navegador (SpeechSynthesis), que é o caminho
+original do app.
+
+> **Ainda falta desta etapa**: usar as durações medidas para *cortar* o vídeo
+> (ducking da trilha sob a voz, legendas por sentença e `.srt`). Hoje o `video.js`
+> continua fatiando por "segundos por foto".
+
 ## 🧪 Testes
 
 ```bash
-pytest -q                       # API + assets + layout + geometria do staging
+pytest -q                       # API, narração, verbalizer, assets, layout e geometria
 node --check static/js/*.js     # sintaxe do front
 ```
+
+Os testes de front (verbalizer e geometria do staging) rodam o JS de verdade no
+**node** e comparam com a implementação Python — sem isso, a única forma de conferir
+o comportamento no sandbox seria confiar na leitura do código. Sem node instalado,
+esses testes são pulados.
 
 ## 💡 Notas
 

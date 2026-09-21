@@ -282,6 +282,10 @@
       caption,
       whatsapp,
       scenes,
+      // As linhas faladas, em ordem e com o tempo de cada uma. `full` é o roteiro
+      // FORMATADO (com marcas de seção, feito para ler na tela); `lines` é o que a
+      // narração fala — é daqui que saem os trechos de áudio e as legendas.
+      lines,
       tone: tone.label,
       targetSeconds: total,
       wordCount: words,
@@ -289,6 +293,236 @@
     };
   }
 
-  global.VVScript = { generate: generateScript, TONES, detectRoom };
+
+  /* ==========================================================================
+   * Verbalizer para TTS
+   * --------------------------------------------------------------------------
+   * O roteiro é escrito para ser LIDO (na tela) e depois FALADO. São duas coisas
+   * diferentes: na tela "78 m² · R$ 650.000" é o que o corretor quer ver; no
+   * ouvido, a voz neural lê "meme ao quadrado" se ninguém traduzir antes.
+   *
+   * verbalize() faz essa tradução: R$ → reais, m² → metros quadrados, (s) do
+   * plural resolvido pela contagem, % → "por cento" e abreviações expandidas
+   * (apto, qto, WC). A ordem das passagens importa (moeda ANTES de qualquer coisa
+   * que mexa em número) e está documentada em cada trecho.
+   *
+   * O que NÃO se converte também é decisão: algarismo solto fica algarismo, porque
+   * em português o numeral concorda em gênero com o substantivo ("1 vaga" é "uma
+   * vaga", "200 vagas" é "duzentas") e a voz neural resolve isso melhor do que
+   * uma tabela nossa. Ver o passo 6 de verbalize().
+   * ======================================================================== */
+
+  const NUM_UNI = [
+    "zero", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove",
+    "dez", "onze", "doze", "treze", "quatorze", "quinze", "dezesseis", "dezessete",
+    "dezoito", "dezenove",
+  ];
+  const NUM_DEZ = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
+  const NUM_CEM = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"];
+  const NUM_GRUPO = ["", "mil", "milhão", "bilhão", "trilhão"];
+  const NUM_GRUPO_PLURAL = ["", "mil", "milhões", "bilhões", "trilhões"];
+
+  /** 1..999 por extenso ("cem" para 100, "cento e vinte" para 120). */
+  function centenasPorExtenso(n) {
+    if (n === 100) return "cem";
+    const c = Math.floor(n / 100);
+    const r = n % 100;
+    let saida = c ? NUM_CEM[c] : "";
+    if (r) {
+      const resto = r < 20 ? NUM_UNI[r] : NUM_DEZ[Math.floor(r / 10)] + (r % 10 ? " e " + NUM_UNI[r % 10] : "");
+      saida = saida ? saida + " e " + resto : resto;
+    }
+    return saida;
+  }
+
+  /**
+   * Inteiro por extenso em PT-BR.
+   *
+   * A única decisão que realmente importa é onde entra o "e" entre os grupos:
+   *
+   *   1.500      → "mil e quinhentos"                       (com "e")
+   *   1.234      → "mil duzentos e trinta e quatro"         (sem "e")
+   *   1.100.000  → "um milhão e cem mil"                    (com "e")
+   *   1.234.567  → "um milhão duzentos e trinta e quatro mil quinhentos e sessenta e sete"
+   *
+   * A regra que reproduz o uso: o "e" entra quando o ÚLTIMO grupo é menor que
+   * 100 ou é centena cheia — ou seja, quando ele não tem "e" interno próprio.
+   */
+  function inteiroPorExtenso(n) {
+    if (!isFinite(n)) return "";
+    n = Math.trunc(n);
+    if (n === 0) return "zero";
+    if (n < 0) return "menos " + inteiroPorExtenso(-n);
+
+    const grupos = [];
+    let resto = n;
+    while (resto > 0) {
+      grupos.push(resto % 1000);
+      resto = Math.floor(resto / 1000);
+    }
+
+    const partes = [];
+    for (let i = grupos.length - 1; i >= 0; i--) {
+      const v = grupos[i];
+      if (!v) continue;
+      if (i === 0) {
+        partes.push(centenasPorExtenso(v));
+      } else if (i === 1) {
+        partes.push(v === 1 ? "mil" : centenasPorExtenso(v) + " mil");
+      } else {
+        const nome = v === 1 ? NUM_GRUPO[i] : NUM_GRUPO_PLURAL[i];
+        partes.push((v === 1 ? "um " : centenasPorExtenso(v) + " ") + nome);
+      }
+    }
+    if (partes.length === 1) return partes[0];
+
+    const ultimoValor = grupos.find((v) => v > 0) || 0;
+    const usaE = ultimoValor < 100 || ultimoValor % 100 === 0;
+    return partes.slice(0, -1).join(" ") + (usaE ? " e " : " ") + partes[partes.length - 1];
+  }
+
+  /** "650.000" / "1.234,56" / "650000" → número (formato brasileiro). */
+  function numeroBR(bruto) {
+    if (bruto == null) return NaN;
+    let t = String(bruto).trim();
+    if (t.indexOf(",") >= 0) t = t.replace(/\./g, "").replace(",", ".");
+    else if (/\.\d{3}(\D|$)/.test(t)) t = t.replace(/\./g, "");  // 1.234 é milhar, não decimal
+    return parseFloat(t);
+  }
+
+  /** Valor em reais por extenso ("R$ 1.234,50" → "mil duzentos e trinta e quatro reais e cinquenta centavos"). */
+  function reaisPorExtenso(bruto) {
+    const num = numeroBR(bruto);
+    if (!isFinite(num)) return "R$ " + bruto;
+    const inteiro = Math.floor(Math.abs(num));
+    const centavos = Math.round((Math.abs(num) - inteiro) * 100);
+
+    const partes = [];
+    if (inteiro > 0) {
+      partes.push(inteiroPorExtenso(inteiro) + (inteiro === 1 ? " real" : " reais"));
+    }
+    if (centavos > 0) {
+      partes.push(inteiroPorExtenso(centavos) + (centavos === 1 ? " centavo" : " centavos"));
+    }
+    if (!partes.length) return "zero reais";
+    return partes.join(" e ");
+  }
+
+  /** Plural português para o marcador "(s)" — só o suficiente para o roteiro. */
+  function pluralizar(palavra) {
+    if (/[rz]$/i.test(palavra)) return palavra + "es";
+    if (/s$/i.test(palavra)) return palavra;
+    if (/l$/i.test(palavra)) return palavra.replace(/l$/i, "is");
+    if (/m$/i.test(palavra)) return palavra.replace(/m$/i, "ns");
+    if (/ão$/i.test(palavra)) return palavra.replace(/ão$/i, "ões");
+    return palavra + "s";
+  }
+
+  // Unidades na ordem em que precisam ser aplicadas: as compostas (km²) antes das
+  // simples (km), senão "km²" viraria "quilômetros²". A alternância é
+  // não-capturante de propósito — com um grupo a mais o número chegaria
+  // deslocado no callback e sairia da frase (bug que já aconteceu aqui: "78 m²"
+  // virava só "metros quadrados").
+  const UNIDADES = [
+    [/(\d+(?:[.,]\d+)?)\s*(?:km²|km2)/gi, "quilômetro quadrado", "quilômetros quadrados"],
+    [/(\d+(?:[.,]\d+)?)\s*(?:m²|m2)/gi, "metro quadrado", "metros quadrados"],
+    [/(\d+(?:[.,]\d+)?)\s*(?:m³|m3)/gi, "metro cúbico", "metros cúbicos"],
+    [/(\d+(?:[.,]\d+)?)\s*km\b/gi, "quilômetro", "quilômetros"],
+    [/(\d+(?:[.,]\d+)?)\s*kg\b/gi, "quilo", "quilos"],
+    [/(\d+(?:[.,]\d+)?)\s*cm\b/gi, "centímetro", "centímetros"],
+    [/(\d+(?:[.,]\d+)?)\s*mm\b/gi, "milímetro", "milímetros"],
+    [/(\d+(?:[.,]\d+)?)\s*m\b/gi, "metro", "metros"],
+  ];
+
+  const ABREV = [
+    [/\baptos\b/gi, "apartamentos"], [/\bapto\b/gi, "apartamento"],
+    [/\bqtos\b/gi, "quartos"], [/\bqto\b/gi, "quarto"],
+    [/\bWC\b/g, "banheiro"], [/\bwc\b/g, "banheiro"],
+    [/\bnº\s*/gi, "número "], [/\bn°\s*/gi, "número "],
+    // atenção: depois de "." não existe \b (ponto e espaço são ambos não-palavra),
+    // então a regex consome o espaço final em vez de exigir fronteira
+    [/\bsr\.\s*/gi, "senhor "], [/\bsra\.\s*/gi, "senhora "],
+    [/\bvc\b/gi, "você"], [/\bobs\.\s*/gi, "observação "],
+  ];
+
+  /** Tira o que não é fala (marcação, emoji, bullet) mas preserva o que tem som. */
+  function limparParaFala(texto) {
+    return String(texto || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/[^\w\s.,;:!?%°º²³$()+\-/ªºáàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ]/g, " ")
+      .replace(/\s+/g, " ");
+  }
+
+  /**
+   * Converte o texto do roteiro para o que deve ser FALADO.
+   * @param {string} texto
+   * @returns {string}
+   */
+  function verbalize(texto) {
+    let t = limparParaFala(texto);
+
+    // 1. moeda ANTES de mexer com números (senão "R$" fica órfão)
+    t = t.replace(/R\$\s*([\d.,]+)/gi, (_, v) => " " + reaisPorExtenso(v) + " ");
+    t = t.replace(/R\$(?!\s*[\d.,])/gi, " reais ");
+
+    // 2. unidades (compostas primeiro, ver UNIDADES). O NÚMERO FICA: quem lê o
+    //    algarismo é a voz ("78" → "setenta e oito"); aqui só trocamos o símbolo
+    //    que ela não sabe pronunciar.
+    UNIDADES.forEach(([re, singular, plural]) => {
+      t = t.replace(re, (_, n) => {
+        const valor = numeroBR(n);
+        return n + " " + (valor === 1 ? singular : plural);
+      });
+    });
+
+    // 3. marcador de plural "(s)" resolvido pela contagem
+    t = t.replace(/\b(\d+|um|uma)\s+([A-Za-zÀ-ÿ]+)\(s\)/gi, (_, qtd, palavra) => {
+      const n = /^\d+$/.test(qtd) ? parseInt(qtd, 10) : (qtd.toLowerCase() === "uma" ? 1 : 1);
+      // o número por extenso entra na passagem 6; aqui só resolvemos o plural
+      return qtd + " " + (n === 1 ? palavra : pluralizar(palavra));
+    });
+    t = t.replace(/([A-Za-zÀ-ÿ]+)\(s\)/gi, "$1");  // sem contagem: lê no singular
+
+    // 4. tempo colado no número (15s / 2min / 1h)
+    t = t.replace(/\b(\d+)\s*(?:s|seg|segs)\b/gi, (_, n) => (n === "1" ? "1 segundo" : n + " segundos"));
+    t = t.replace(/\b(\d+)\s*(?:min|mins)\b/gi, (_, n) => (n === "1" ? "1 minuto" : n + " minutos"));
+    t = t.replace(/\b(\d+)\s*(?:h|hs)\b/gi, (_, n) => (n === "1" ? "1 hora" : n + " horas"));
+
+    // 5. sinais e abreviações
+    t = t.replace(/%/g, " por cento ");
+    t = t.replace(/\s*&\s*/g, " e ");
+    ABREV.forEach(([re, troca]) => { t = t.replace(re, troca); });
+
+    // 6. números SOLTOS ficam como estão — de propósito.
+    //
+    //    A tentação é escrever tudo por extenso, mas em português o numeral
+    //    concorda em gênero com o substantivo: "1 vaga" é "uma vaga", "2 vagas"
+    //    é "duas vagas", "200 vagas" é "duzentas vagas". Uma voz neural resolve
+    //    isso sozinha (e resolve melhor do que uma tabela nossa), então converter
+    //    seria trocar um acerto por um erro: "um vaga".
+    //
+    //    O trabalho do verbalizer é só o que a voz NÃO consegue ler: símbolo de
+    //    moeda, unidade de medida, %, abreviação e marcador de plural. Número por
+    //    extenso continua existindo onde o gênero é nosso e conhecido — o valor em
+    //    reais (sempre masculino) e os centavos.
+
+    // 7. faxina final
+    t = t.replace(/\s+/g, " ")
+      .replace(/\s+([,;.!?])/g, "$1")
+      .replace(/\b(e)\s+e\b/gi, "$1")
+      .trim();
+    return t;
+  }
+
+  global.VVScript = {
+    generate: generateScript,
+    TONES,
+    detectRoom,
+    // verbalizer: tudo que o TTS consome passa por aqui antes de virar áudio
+    verbalize,
+    inteiroPorExtenso,
+    reaisPorExtenso,
+    pluralizar,
+  };
 
 })(window);

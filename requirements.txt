@@ -2,6 +2,10 @@ Flask>=3.0,<4.0
 gunicorn>=21.0
 pytest>=7.0
 
+# Narração neural (narrate.py). Sem internet o app cai sozinho para uma voz de
+# teste local; para forçar: VV_MOCK_TTS=1
+edge-tts>=6.1
+
 # Ferramentas de assets (tools/make_assets.py): recorte dos móveis fotografados
 # em fundo branco para PNG com alpha. O app em si não precisa destas libs.
 Pillow>=10.0

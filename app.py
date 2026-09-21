@@ -1,21 +1,30 @@
 """VideoVortex — backend Flask.
 
-Serve o frontend (tour 360 simulado, staging virtual, estúdio de vídeo)
-e expõe uma API simples de projetos (salvar/listar/carregar/excluir).
-A geração de roteiro, o staging virtual e a gravação do vídeo rodam
-100% no navegador — nenhum serviço externo ou chave de API é necessário.
+Serve o frontend (tour 360 simulado, staging virtual, estúdio de vídeo) e expõe:
+
+* a API de projetos (salvar/listar/carregar/excluir);
+* a API de narração — a única parte que faz trabalho pesado no servidor, porque
+  depende de voz neural, cache em disco e medição de duração real do áudio.
+
+O roteiro, o staging e a gravação do vídeo continuam 100% no navegador: nenhum
+serviço externo e nenhuma chave de API são necessários para o app funcionar.
+A narração cai para uma voz de teste local quando não há internet — ver narrate.py.
 """
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
+
+import narrate
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 PROJECTS_FILE = os.path.join(DATA_DIR, "projects.json")
+AUDIO_DIR = narrate.AUDIO_DIR
 
 app = Flask(__name__)
 
@@ -125,6 +134,71 @@ def delete_project(project_id):
     projects = [p for p in _load_projects() if p.get("id") != project_id]
     _save_projects(projects)
     return jsonify({"deleted": project_id})
+
+
+# ------------------------------------------------------------------ narração
+# A chave do cache nasce de sha1 e sempre tem este formato; validar a máscara é
+# o que impede um ../ de escapar da pasta de áudio ao servir o arquivo.
+AUDIO_RE = re.compile(r"^[0-9a-f]{20}\.(mp3|wav)$")
+
+
+@app.get("/api/narrate/voices")
+def narrate_voices():
+    """O que esta máquina consegue sintetizar agora (e quanto já está em cache)."""
+    return jsonify(narrate.backend_report())
+
+
+@app.post("/api/narrate")
+def narrate_one():
+    """Sintetiza um trecho. Devolve a duração medida — é ela que dita o vídeo."""
+    payload = request.get_json(force=True, silent=True) or {}
+    texto = payload.get("text") or ""
+    try:
+        res = narrate.synthesize(
+            texto,
+            voice=payload.get("voice"),
+            rate=payload.get("rate") or narrate.DEFAULT_RATE,
+            pitch=payload.get("pitch") or narrate.DEFAULT_PITCH,
+            backend=payload.get("backend"),
+            force=bool(payload.get("force")),
+        )
+    except narrate.SynthError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({k: v for k, v in res.items() if k != "path"})
+
+
+@app.post("/api/narrate/batch")
+def narrate_batch():
+    """Sintetiza o roteiro inteiro: um áudio por trecho, na ordem recebida.
+
+    O roteiro é regerado a cada ajuste de tom/duração, então quase todo trecho já
+    chega em cache — o custo por clique é só a leitura do sidecar.
+    """
+    payload = request.get_json(force=True, silent=True) or {}
+    segmentos = payload.get("segments") or []
+    if not isinstance(segmentos, list) or not segmentos:
+        return jsonify({"error": "envie segments: [{id, text}, ...]"}), 400
+    try:
+        res = narrate.synthesize_many(
+            segmentos,
+            voice=payload.get("voice"),
+            rate=payload.get("rate") or narrate.DEFAULT_RATE,
+            pitch=payload.get("pitch") or narrate.DEFAULT_PITCH,
+            backend=payload.get("backend"),
+        )
+    except narrate.SynthError as exc:
+        return jsonify({"error": str(exc)}), 400
+    # `backend`/`mock` vêm do narrate medindo o que foi USADO (pode ter caído
+    # para a voz de teste no meio do caminho) — não do que foi pedido.
+    return jsonify(res)
+
+
+@app.get("/api/audio/<path:filename>")
+def audio_file(filename):
+    """Serve o áudio do cache. A máscara da chave basta como autorização."""
+    if not AUDIO_RE.match(filename):
+        return jsonify({"error": "nome de áudio inválido"}), 400
+    return send_from_directory(AUDIO_DIR, filename, conditional=True)
 
 
 if __name__ == "__main__":

@@ -129,6 +129,11 @@
         <button class="btn" id="btnCopy">📑 Copiar</button>
         <button class="btn" id="btnDlScript">⬇ Baixar .txt</button>
       </div>
+      <div class="btn-row tts-row">
+        <select id="ttsVoice" class="sm" title="Voz da narração"></select>
+        <button class="btn ghost" id="btnVoiceSample" title="Ouve uma frase curta com a voz escolhida">🎧 Amostra da voz</button>
+        <span class="tts-status" id="ttsStatus"></span>
+      </div>
       <div class="btn-row end">
         <button class="btn" data-goto="2">← Dados</button>
         <button class="btn primary" data-goto="4">Ver tour 360° →</button>
@@ -225,6 +230,8 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<!-- narração neural: um áudio por trecho, servido e cacheado pelo backend -->
+<audio id="ttsAudio" preload="none" hidden></audio>
 
 <script src="{{ url_for('static', filename='js/scriptgen.js') }}"></script>
 <script src="{{ url_for('static', filename='js/staging.js') }}"></script>
