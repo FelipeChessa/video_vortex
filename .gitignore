@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+data/projects.json
+.pytest_cache/
+*.webm
+*.mp4
+.DS_Store

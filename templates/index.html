@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VideoVortex — Tour 360° + Roteiro de Vendas para Imóveis</title>
+  <meta name="description" content="Transforme fotos de imóveis em roteiro de vendas, tour 360° simulado com staging virtual e vídeo pronto para divulgar." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="logo">
+      <div class="logo-mark">🌀</div>
+      <div>
+        <h1>Video<span>Vortex</span></h1>
+        <small>Fotos do imóvel → roteiro de vendas + tour 360° + vídeo</small>
+      </div>
+    </div>
+    <div class="proj-bar">
+      <input type="text" id="projectName" placeholder="Nome do projeto…" />
+      <button class="btn" id="btnSaveProject" title="Salvar projeto no servidor">💾 Salvar</button>
+      <select id="projectList" class="sm" title="Abrir projeto salvo">
+        <option value="">— Meus projetos salvos —</option>
+      </select>
+      <button class="btn danger ghost" id="btnDelProject" title="Excluir projeto selecionado">🗑</button>
+    </div>
+  </header>
+
+  <nav class="stepper" id="stepper"></nav>
+
+  <!-- ============ ETAPA 1 — FOTOS ============ -->
+  <section class="panel active" id="panel-1">
+    <div class="card">
+      <h2>📸 1. Fotos do imóvel / local</h2>
+      <p class="sub">Envie as fotos dos ambientes na ordem do tour. Marque <b>“Vazio? mobiliar ✨”</b> nas fotos de ambientes vazios para o app simular o mobiliário automaticamente.</p>
+      <div class="dropzone" id="dropzone">
+        <span class="big">📤</span>
+        Arraste fotos para cá ou <b>clique para selecionar</b>
+        <input type="file" id="fileInput" accept="image/*" multiple hidden />
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btnUpload">＋ Adicionar fotos</button>
+        <button class="btn ghost" id="btnDemo">🎲 Gerar fotos demo (testar sem uploads)</button>
+        <button class="btn danger ghost" id="btnClear">Limpar</button>
+      </div>
+      <div class="photo-count" id="photoCount"></div>
+      <div class="empty-state" id="emptyState">Nenhuma foto ainda — adicione acima ou gere as fotos demo 👆</div>
+      <div class="photo-grid" id="photoGrid"></div>
+      <div class="btn-row end">
+        <span></span>
+        <button class="btn primary" data-goto="2">Continuar → Dados do imóvel</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ETAPA 2 — DADOS ============ -->
+  <section class="panel" id="panel-2">
+    <div class="card">
+      <h2>🏠 2. Informações do imóvel / local</h2>
+      <p class="sub">Esses dados alimentam o roteiro de vendas, os cartões do vídeo e a legenda das redes sociais.</p>
+      <label class="f">Título do anúncio <input type="text" id="fTitulo" placeholder="Ex.: Apartamento 2 quartos com varanda gourmet" /></label>
+      <div class="frow">
+        <label class="f">Tipo
+          <select id="fTipo">
+            <option>Apartamento</option><option>Casa</option><option>Cobertura</option>
+            <option>Studio / Kitnet</option><option>Terreno</option><option>Comercial</option><option>Outro</option>
+          </select>
+        </label>
+        <label class="f">Área (m²) <input type="text" id="fArea" placeholder="Ex.: 78" /></label>
+        <label class="f">Preço <input type="text" id="fPreco" placeholder="Ex.: R$ 650.000" /></label>
+        <label class="f">Endereço / bairro <input type="text" id="fEndereco" placeholder="Ex.: Vila Mariana, São Paulo" /></label>
+      </div>
+      <div class="frow" style="margin-top:10px">
+        <label class="f">Quartos <input type="number" id="fQuartos" min="0" placeholder="2" /></label>
+        <label class="f">Banheiros <input type="number" id="fBanheiros" min="0" placeholder="1" /></label>
+        <label class="f">Vagas <input type="number" id="fVagas" min="0" placeholder="1" /></label>
+        <label class="f">Corretor(a) <input type="text" id="fCorretor" placeholder="Seu nome" /></label>
+      </div>
+      <label class="f" style="margin-top:10px">WhatsApp / contato <input type="text" id="fContato" placeholder="Ex.: (11) 99999-0000" /></label>
+      <label class="f">Diferenciais (um por linha ou separados por vírgula)
+        <textarea id="fDiferenciais" placeholder="Ex.:&#10;Varanda gourmet com churrasqueira&#10;Próximo ao metrô&#10;Condomínio com piscina e academia"></textarea>
+      </label>
+      <div class="btn-row end">
+        <button class="btn" data-goto="1">← Fotos</button>
+        <button class="btn primary" data-goto="3">Gerar roteiro de vendas →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ETAPA 3 — ROTEIRO ============ -->
+  <section class="panel" id="panel-3">
+    <div class="card">
+      <h2>📝 3. Roteiro de venda e apresentação</h2>
+      <p class="sub">Gerado automaticamente a partir das fotos + dados. Escolha o tom e a duração, regenere variações e ouça a narração.</p>
+      <div class="opt-row">
+        <label class="f">Tom de voz
+          <select id="toneSel" class="sm">
+            <option value="persuasivo">Persuasivo</option>
+            <option value="luxo">Alto padrão / Luxo</option>
+            <option value="familiar">Familiar / Acolhedor</option>
+            <option value="investidor">Investidor</option>
+            <option value="jovem">Jovem / Descolado</option>
+          </select>
+        </label>
+        <label class="f">Duração do vídeo
+          <select id="durSel" class="sm">
+            <option value="30">~30s (stories / reels)</option>
+            <option value="60" selected>~60s (padrão)</option>
+            <option value="90">~90s (YouTube / site)</option>
+          </select>
+        </label>
+        <label class="f">&nbsp;<button class="btn" id="btnRegen">🔄 Gerar variação</button></label>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="full">📋 Roteiro completo</button>
+        <button class="tab" data-tab="hook">⚡ Gancho 15s</button>
+        <button class="tab" data-tab="caption">📱 Legenda p/ redes</button>
+        <button class="tab" data-tab="whatsapp">💬 Pitch WhatsApp</button>
+      </div>
+      <textarea id="scriptOut" placeholder="O roteiro aparece aqui…"></textarea>
+      <div class="script-meta" id="scriptMeta"></div>
+      <div class="btn-row">
+        <button class="btn" id="btnSpeak">🔊 Ouvir narração</button>
+        <button class="btn ghost" id="btnStopSpeak">⏹ Parar</button>
+        <button class="btn" id="btnCopy">📑 Copiar</button>
+        <button class="btn" id="btnDlScript">⬇ Baixar .txt</button>
+      </div>
+      <div class="btn-row end">
+        <button class="btn" data-goto="2">← Dados</button>
+        <button class="btn primary" data-goto="4">Ver tour 360° →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ETAPA 4 — TOUR ============ -->
+  <section class="panel" id="panel-4">
+    <div class="card">
+      <h2>🌀 4. Tour com simulação 360° + staging virtual</h2>
+      <p class="sub">A câmera desliza em panorâmica contínua simulando o giro 360° pelo ambiente. Ambientes vazios ganham <b>mobilia automática</b> (staging virtual) no estilo escolhido.</p>
+      <div class="tour-wrap" id="tourWrap">
+        <canvas id="tourCanvas"></canvas>
+        <div class="tour-nav">
+          <button id="btnTourPrev" title="Ambiente anterior">‹</button>
+          <button id="btnTourNext" title="Próximo ambiente">›</button>
+        </div>
+      </div>
+      <div class="tour-controls">
+        <button class="btn primary" id="btnTourPlay">▶ Tour automático</button>
+        <button class="btn" id="btnFullscreen">⛶ Tela cheia</button>
+        <span class="spacer"></span>
+        <label class="check"><input type="checkbox" id="stagingToggle" checked /> Staging ✨</label>
+        <select id="stagingStyle" class="sm" title="Estilo de decoração">
+          <option value="moderno">Moderno</option>
+          <option value="minimalista">Minimalista</option>
+          <option value="rustico">Rústico</option>
+          <option value="luxo">Luxo</option>
+        </select>
+        <label class="check"><input type="checkbox" id="compareToggle" /> Antes/Depois</label>
+        <select id="tourSpeed" class="sm" title="Velocidade">
+          <option value="0.6">0.6×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.6">1.6×</option>
+        </select>
+      </div>
+      <div class="thumbs" id="tourThumbs"></div>
+      <div class="tour-info" id="tourInfo"></div>
+      <div class="btn-row end">
+        <button class="btn" data-goto="3">← Roteiro</button>
+        <button class="btn primary" data-goto="5">Criar vídeo →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ETAPA 5 — VÍDEO ============ -->
+  <section class="panel" id="panel-5">
+    <div class="grid2">
+      <div class="card">
+        <h2>🎬 5. Estúdio de vídeo</h2>
+        <p class="sub">Renderiza o tour com movimento Ken Burns, staging, legendas do roteiro e trilha — e grava o vídeo final no seu navegador.</p>
+        <div class="video-summary" id="videoSummary"></div>
+        <div class="video-opts">
+          <label>Resolução
+            <select id="resSel"><option value="720p">HD 720p</option><option value="1080p">Full HD 1080p</option></select>
+          </label>
+          <label>Seg. por foto
+            <select id="secSel"><option value="3">3s</option><option value="4" selected>4s</option><option value="5">5s</option><option value="6">6s</option></select>
+          </label>
+          <label><input type="checkbox" id="vTitle" checked /> Cartão de abertura</label>
+          <label><input type="checkbox" id="vStaging" checked /> Staging virtual ✨</label>
+          <label><input type="checkbox" id="vCaptions" checked /> Legendas do roteiro</label>
+          <label><input type="checkbox" id="vMusic" checked /> Trilha ambiente 🎵</label>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="btnRecord">⏺ Gravar vídeo do tour</button>
+        </div>
+        <div class="rec-track"><div id="recBar"></div></div>
+        <div id="recLabel">Pronto para gravar.</div>
+        <div class="btn-row end">
+          <button class="btn" data-goto="4">← Tour</button>
+          <span></span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>▶ Prévia / resultado</h2>
+        <p class="sub">Acompanhe a renderização ao vivo aqui.</p>
+        <div class="video-canvas-wrap"><canvas id="videoCanvas" width="1280" height="720"></canvas></div>
+        <div id="videoResult" style="display:none; margin-top:14px">
+          <video id="videoPlayer" controls playsinline></video>
+          <div class="script-meta" id="videoMeta"></div>
+          <div class="btn-row">
+            <button class="btn primary" id="btnDownloadVideo">⬇ Baixar vídeo (.webm)</button>
+            <button class="btn" id="btnDownloadSRT">📝 Baixar legendas (.srt)</button>
+          </div>
+          <p class="hint" style="margin-top:12px">💡 <b>Precisa de MP4?</b> O arquivo .webm abre direto no Chrome/Edge/WhatsApp Web. Para converter em MP4 grátis, arraste o arquivo no <b>CapCut</b>, <b>CloudConvert</b> ou rode <b>ffmpeg -i tour.webm tour.mp4</b>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>VideoVortex 🌀 — roteiro + tour 360° simulado + staging virtual + vídeo · feito para corretores · nenhum dado sai do seu navegador (exceto projetos salvos no servidor)</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="{{ url_for('static', filename='js/scriptgen.js') }}"></script>
+<script src="{{ url_for('static', filename='js/staging.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tour.js') }}"></script>
+<script src="{{ url_for('static', filename='js/demo.js') }}"></script>
+<script src="{{ url_for('static', filename='js/video.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
