@@ -119,9 +119,12 @@
 
       const room = (global.VVScript ? global.VVScript.detectRoom(p.label) : "default");
       const wantStaging = this.stagingOn && p.empty && global.VVStaging;
+      // a cena (zoom + deslocamento usados no fundo) amarra o mobiliário à foto:
+      // sem ela, os móveis deslizam por cima do chão quando a panorâmica anda.
+      const scene = { img: p.img, zoom: zoom, offsetX: off };
       if (wantStaging && !this.compare) {
         global.VVStaging.draw(ctx, W, H, {
-          style: this.stagingStyle, room, seed: this._seedOf(p), alpha: 0.95, badge: true,
+          style: this.stagingStyle, room, seed: this._seedOf(p), alpha: 0.95, badge: true, scene,
         });
       } else if (wantStaging && this.compare) {
         // metade esquerda sem staging, direita com staging
@@ -130,7 +133,7 @@
         ctx.rect(W / 2, 0, W / 2, H);
         ctx.clip();
         global.VVStaging.draw(ctx, W, H, {
-          style: this.stagingStyle, room, seed: this._seedOf(p), alpha: 0.95, badge: false,
+          style: this.stagingStyle, room, seed: this._seedOf(p), alpha: 0.95, badge: false, scene,
         });
         ctx.restore();
         ctx.fillStyle = "rgba(255,255,255,.9)";

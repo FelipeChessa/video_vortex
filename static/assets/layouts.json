@@ -1,0 +1,378 @@
+{
+  "version": 2,
+  "note": "Layout do staging fotográfico. Fonte única de verdade: o navegador (static/js/staging.js) e o conferidor offline (tools/preview_staging.py) leem ESTE arquivo. Coordenadas são fracoes da FOTO, nunca do canvas — assim a mobília fica colada no ambiente quando a panorâmica se move ou o zoom muda. x = 0..1 na largura da foto; h = altura do objeto como fração da altura da foto; bottom (padrão) ou top (anchor=ceiling) = onde o objeto encosta, também em fração da altura da foto. A largura sai do aspecto real do PNG (w = h * aspecto), então nunca é preciso manter duas medidas em sincronia. depth = 0..1 (perto do fundo → perto da câmera), usado para a ordem de desenho, o desfoque atmosférico e a sombra de contato.",
+  "styles": {
+    "moderno": {
+      "label": "Moderno",
+      "filter": "saturate(1.06) contrast(1.08)",
+      "shadow": 0.34
+    },
+    "minimalista": {
+      "label": "Minimalista",
+      "filter": "saturate(0.50) brightness(1.20) contrast(0.90)",
+      "shadow": 0.18
+    },
+    "rustico": {
+      "label": "Rústico",
+      "filter": "saturate(1.28) sepia(0.38) contrast(1.05) brightness(0.93)",
+      "shadow": 0.4
+    },
+    "luxo": {
+      "label": "Luxo",
+      "filter": "saturate(1.14) contrast(1.24) brightness(0.76)",
+      "shadow": 0.46
+    }
+  },
+  "assets": {
+    "sofa": {
+      "file": "sofa.png",
+      "anchor": "floor"
+    },
+    "armchair": {
+      "file": "armchair.png",
+      "anchor": "floor"
+    },
+    "dining-set": {
+      "file": "dining-set.png",
+      "anchor": "floor"
+    },
+    "bed": {
+      "file": "bed.png",
+      "anchor": "floor"
+    },
+    "nightstand": {
+      "file": "nightstand.png",
+      "anchor": "floor"
+    },
+    "plant": {
+      "file": "plant.png",
+      "anchor": "floor"
+    },
+    "vase-decor": {
+      "file": "vase-decor.png",
+      "anchor": "floor"
+    },
+    "table-lamp": {
+      "file": "table-lamp.png",
+      "anchor": "surface"
+    },
+    "wall-art": {
+      "file": "wall-art.png",
+      "anchor": "wall"
+    },
+    "pendant": {
+      "file": "pendant.png",
+      "anchor": "ceiling"
+    }
+  },
+  "rooms": {
+    "sala": {
+      "photo": true,
+      "placements": [
+        {
+          "asset": "wall-art",
+          "x": 0.42,
+          "top": 0.15,
+          "h": 0.15,
+          "depth": 0.12
+        },
+        {
+          "asset": "plant",
+          "x": 0.9,
+          "bottom": 0.88,
+          "h": 0.3,
+          "depth": 0.4
+        },
+        {
+          "asset": "nightstand",
+          "x": 0.13,
+          "bottom": 0.86,
+          "h": 0.105,
+          "depth": 0.45
+        },
+        {
+          "asset": "table-lamp",
+          "x": 0.13,
+          "bottom": 0.755,
+          "h": 0.115,
+          "depth": 0.5
+        },
+        {
+          "asset": "sofa",
+          "x": 0.42,
+          "bottom": 0.88,
+          "h": 0.2,
+          "depth": 0.7
+        },
+        {
+          "asset": "armchair",
+          "x": 0.72,
+          "bottom": 0.89,
+          "h": 0.17,
+          "depth": 0.82
+        },
+        {
+          "asset": "vase-decor",
+          "x": 0.28,
+          "bottom": 0.88,
+          "h": 0.115,
+          "depth": 0.95
+        }
+      ]
+    },
+    "quarto": {
+      "photo": true,
+      "placements": [
+        {
+          "asset": "wall-art",
+          "x": 0.5,
+          "top": 0.14,
+          "h": 0.13,
+          "depth": 0.1
+        },
+        {
+          "asset": "plant",
+          "x": 0.9,
+          "bottom": 0.9,
+          "h": 0.26,
+          "depth": 0.35
+        },
+        {
+          "asset": "bed",
+          "x": 0.5,
+          "bottom": 0.88,
+          "h": 0.24,
+          "depth": 0.55
+        },
+        {
+          "asset": "nightstand",
+          "x": 0.3,
+          "bottom": 0.86,
+          "h": 0.1,
+          "depth": 0.6
+        },
+        {
+          "asset": "nightstand",
+          "x": 0.7,
+          "bottom": 0.86,
+          "h": 0.1,
+          "depth": 0.6
+        },
+        {
+          "asset": "table-lamp",
+          "x": 0.3,
+          "bottom": 0.76,
+          "h": 0.095,
+          "depth": 0.64
+        },
+        {
+          "asset": "table-lamp",
+          "x": 0.7,
+          "bottom": 0.76,
+          "h": 0.095,
+          "depth": 0.64
+        }
+      ]
+    },
+    "cozinha": {
+      "photo": true,
+      "placements": [
+        {
+          "asset": "pendant",
+          "x": 0.5,
+          "top": 0.02,
+          "h": 0.26,
+          "depth": 0.18
+        },
+        {
+          "asset": "wall-art",
+          "x": 0.14,
+          "top": 0.15,
+          "h": 0.12,
+          "depth": 0.12
+        },
+        {
+          "asset": "plant",
+          "x": 0.9,
+          "bottom": 0.9,
+          "h": 0.28,
+          "depth": 0.45
+        },
+        {
+          "asset": "dining-set",
+          "x": 0.5,
+          "bottom": 0.9,
+          "h": 0.225,
+          "depth": 0.7
+        },
+        {
+          "asset": "vase-decor",
+          "x": 0.24,
+          "bottom": 0.88,
+          "h": 0.105,
+          "depth": 0.92
+        }
+      ]
+    },
+    "escritorio": {
+      "photo": true,
+      "placements": [
+        {
+          "asset": "wall-art",
+          "x": 0.38,
+          "top": 0.15,
+          "h": 0.13,
+          "depth": 0.12
+        },
+        {
+          "asset": "nightstand",
+          "x": 0.3,
+          "bottom": 0.85,
+          "h": 0.1,
+          "depth": 0.45
+        },
+        {
+          "asset": "table-lamp",
+          "x": 0.3,
+          "bottom": 0.75,
+          "h": 0.1,
+          "depth": 0.5
+        },
+        {
+          "asset": "plant",
+          "x": 0.9,
+          "bottom": 0.9,
+          "h": 0.26,
+          "depth": 0.5
+        },
+        {
+          "asset": "armchair",
+          "x": 0.64,
+          "bottom": 0.89,
+          "h": 0.18,
+          "depth": 0.78
+        },
+        {
+          "asset": "vase-decor",
+          "x": 0.17,
+          "bottom": 0.885,
+          "h": 0.1,
+          "depth": 0.95
+        }
+      ]
+    },
+    "varanda": {
+      "photo": true,
+      "placements": [
+        {
+          "asset": "plant",
+          "x": 0.9,
+          "bottom": 0.9,
+          "h": 0.28,
+          "depth": 0.35
+        },
+        {
+          "asset": "armchair",
+          "x": 0.34,
+          "bottom": 0.88,
+          "h": 0.18,
+          "depth": 0.62
+        },
+        {
+          "asset": "armchair",
+          "x": 0.6,
+          "bottom": 0.88,
+          "h": 0.18,
+          "depth": 0.62,
+          "flip": true
+        },
+        {
+          "asset": "vase-decor",
+          "x": 0.74,
+          "bottom": 0.89,
+          "h": 0.11,
+          "depth": 0.85
+        }
+      ]
+    },
+    "area": {
+      "photo": true,
+      "placements": [
+        {
+          "asset": "plant",
+          "x": 0.15,
+          "bottom": 0.9,
+          "h": 0.27,
+          "depth": 0.35
+        },
+        {
+          "asset": "plant",
+          "x": 0.85,
+          "bottom": 0.9,
+          "h": 0.27,
+          "depth": 0.35
+        },
+        {
+          "asset": "armchair",
+          "x": 0.36,
+          "bottom": 0.89,
+          "h": 0.19,
+          "depth": 0.65
+        },
+        {
+          "asset": "armchair",
+          "x": 0.62,
+          "bottom": 0.89,
+          "h": 0.19,
+          "depth": 0.65,
+          "flip": true
+        }
+      ]
+    },
+    "default": {
+      "photo": true,
+      "placements": [
+        {
+          "asset": "wall-art",
+          "x": 0.5,
+          "top": 0.15,
+          "h": 0.13,
+          "depth": 0.12
+        },
+        {
+          "asset": "plant",
+          "x": 0.88,
+          "bottom": 0.9,
+          "h": 0.28,
+          "depth": 0.42
+        },
+        {
+          "asset": "sofa",
+          "x": 0.46,
+          "bottom": 0.88,
+          "h": 0.19,
+          "depth": 0.7
+        },
+        {
+          "asset": "vase-decor",
+          "x": 0.17,
+          "bottom": 0.88,
+          "h": 0.105,
+          "depth": 0.9
+        }
+      ]
+    },
+    "banheiro": {
+      "photo": false,
+      "placements": []
+    },
+    "fachada": {
+      "photo": false,
+      "placements": []
+    },
+    "garagem": {
+      "photo": false,
+      "placements": []
+    }
+  }
+}

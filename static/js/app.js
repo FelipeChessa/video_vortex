@@ -579,6 +579,16 @@
     loadProjectList();
 
     if ("speechSynthesis" in window) speechSynthesis.getVoices();
+
+    // staging fotográfico: carrega layouts + cutouts em segundo plano. Enquanto
+    // não chegam, o draw() usa a camada procedural — nada bloqueia a interface.
+    if (window.VVStaging && VVStaging.preload) {
+      VVStaging.preload().then((ok) => {
+        const st = VVStaging.status();
+        if (ok && st.ready) console.info(`[VideoVortex] staging fotográfico: ${st.assets}/${st.total} cutouts`);
+        else console.info("[VideoVortex] staging fotográfico indisponível — usando a camada procedural");
+      });
+    }
   }
 
   document.addEventListener("DOMContentLoaded", boot);

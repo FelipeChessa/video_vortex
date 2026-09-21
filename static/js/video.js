@@ -27,6 +27,8 @@
     const maxOff = Math.max(0, (dw - W) / 2);
     const off = (easeInOut(progress) * 2 - 1) * maxOff * dir;
     ctx.drawImage(img, (W - dw) / 2 + off, (H - dh) / 2, dw, dh);
+    // devolve a geometria usada para o staging conseguir colar a mobília na foto
+    return { zoom: zoom / base, offsetX: off };
   }
 
   function drawTitleCard(ctx, W, H, info, progress) {
@@ -311,13 +313,14 @@
         const idx = Math.min(photos.length - 1, Math.floor(tourT / per));
         const local = (tourT - idx * per) / per;
         const dir = idx % 2 === 0 ? 1 : -1;
-        drawCoverKenBurns(ctx, images[idx], W, H, local, dir);
+        const scene = drawCoverKenBurns(ctx, images[idx], W, H, local, dir);
         const photo = photos[idx];
         if (withStaging && photo.empty && global.VVStaging && global.VVScript) {
           const room = global.VVScript.detectRoom(photo.label);
           const aIn = Math.min(1, local * 4);
           global.VVStaging.draw(ctx, W, H, {
             style: stagingStyle || "moderno", room, seed: idx * 77 + 13, alpha: 0.95 * aIn, badge: true,
+            scene: { img: images[idx], zoom: scene.zoom, offsetX: scene.offsetX },
           });
         }
         // vinheta
