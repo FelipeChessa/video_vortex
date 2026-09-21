@@ -273,3 +273,181 @@ def test_preload_resolve_os_ambientes_com_anchor_do_asset(layouts):
         # ordenados do fundo para a frente
         depths = [l["depth"] for l in layers]
         assert depths == sorted(depths), f"{room}: layers fora de ordem de profundidade"
+
+
+def test_mobilia_fica_colada_no_piso_durante_a_panoramica(layouts):
+    """O ponto central do design: a mobília não pode deslizar sobre o chão.
+
+    Roda o `draw()` de verdade (contexto 2D dublado que registra os drawImage)
+    para vários deslocamentos de panorâmica e confere a posição de cada móvel
+    **em coordenadas da foto**. Se a posição na foto fica constante enquanto o
+    quadro se move, a mobília está amarrada ao ambiente — que é o que faz o tour
+    parecer um ambiente de verdade em vez de adesivos colados por cima.
+
+    Cada móvel é identificado pelo ARQUIVO do cutout, não pela ordem do array:
+    com a panorâmica deslocada um objeto pode sair de quadro (o culling do
+    `visible()` é intencional), e aí os índices deixam de casar entre quadros.
+    """
+    import json as _json
+    from PIL import Image as _Image
+
+    dims = {}
+    for name, meta in layouts["assets"].items():
+        with _Image.open(os.path.join(ASSETS, meta["file"])) as im:
+            dims[meta["file"]] = [im.width, im.height]
+
+    script = """
+    global.window = global;
+    global.document = { createElement: () => ({ getContext: () => null }) };
+    require(%(js)s);
+
+    const layouts = %(layouts)s;
+    const dims = %(dims)s;
+    VVStaging._setLayouts(layouts);
+    for (const name of Object.keys(layouts.assets)) {
+      const file = layouts.assets[name].file;
+      VVStaging._setImage(file, {
+        nome: file,
+        naturalWidth: dims[file][0],
+        naturalHeight: dims[file][1],
+      });
+    }
+
+    const chamadas = [];
+    const grad = { addColorStop() {} };
+    const ctx = {
+      filter: 'none', globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 1,
+      shadowBlur: 0, shadowColor: '', shadowOffsetY: 0, font: '', textBaseline: '', textAlign: '',
+      save() {}, restore() {}, translate() {}, scale() {}, beginPath() {}, closePath() {},
+      arc() {}, ellipse() {}, fill() {}, stroke() {}, fillRect() {}, strokeRect() {},
+      moveTo() {}, lineTo() {}, quadraticCurveTo() {}, arcTo() {}, clip() {}, rect() {},
+      createLinearGradient: () => grad, createRadialGradient: () => grad,
+      measureText: () => ({ width: 100 }), fillText() {},
+      drawImage(img, x, y, w, h) { chamadas.push({ nome: img.nome, x: x, y: y, w: w, h: h }); },
+    };
+
+    const W = 1280, H = 720, zoom = 1.22;
+    const img = { naturalWidth: 1280, naturalHeight: 720, nome: 'FUNDO' };
+    const saida = {};
+    for (const off of [-160, -80, 0, 80, 160]) {
+      chamadas.length = 0;
+      const proj = VVStaging.coverProjection(img, W, H, zoom, off);
+      VVStaging.draw(ctx, W, H, {
+        style: 'moderno', room: 'sala', alpha: 1, badge: false,
+        scene: { img: img, zoom: zoom, offsetX: off },
+      });
+      saida[off] = {};
+      for (const c of chamadas) {
+        if (c.nome === 'FUNDO') continue;
+        saida[off][c.nome] = {
+          fx: (c.x - proj.dx) / proj.scale,   // posição convertida para px da FOTO
+          fy: (c.y - proj.dy) / proj.scale,
+          fw: c.w / proj.scale,
+          fh: c.h / proj.scale,
+        };
+      }
+    }
+    console.log(JSON.stringify(saida));
+    """ % {"js": _json.dumps(STAGING_JS), "layouts": _json.dumps(layouts), "dims": _json.dumps(dims)}
+
+    res = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         cwd=BASE_DIR, timeout=90)
+    assert res.returncode == 0, f"node falhou:\n{res.stderr}"
+    por_offset = _json.loads(res.stdout.strip().splitlines()[-1])
+
+    esperados = {layouts["assets"][pl["asset"]]["file"]
+                 for pl in layouts["rooms"]["sala"]["placements"]}
+
+    # no quadro central todos os móveis do ambiente aparecem
+    assert set(por_offset["0"]) <= esperados
+    assert len(por_offset["0"]) >= 5, (
+        f"esperava quase todos os móveis no quadro central, veio {sorted(por_offset['0'])}"
+    )
+    # algum culling nas pontas é esperado (objeto sai de quadro)
+    assert len(por_offset["160"]) <= len(por_offset["0"])
+
+    for off, itens in por_offset.items():
+        for arquivo, dado in itens.items():
+            ref = por_offset["0"].get(arquivo)
+            if not ref:
+                continue  # só existe nas pontas: nada para comparar
+            assert dado["fx"] == pytest.approx(ref["fx"], abs=0.5), (
+                f"offset {off}: {arquivo} mudou de lugar NA FOTO em x "
+                f"({dado['fx']:.1f} vs {ref['fx']:.1f}) — descolou do ambiente"
+            )
+            assert dado["fy"] == pytest.approx(ref["fy"], abs=0.5), (
+                f"offset {off}: {arquivo} mudou de altura NA FOTO "
+                f"({dado['fy']:.1f} vs {ref['fy']:.1f}) — flutuou ou afundou"
+            )
+            assert dado["fw"] == pytest.approx(ref["fw"], abs=0.5), (
+                f"offset {off}: {arquivo} mudou de largura com a panorâmica"
+            )
+            assert dado["fh"] == pytest.approx(ref["fh"], abs=0.5), (
+                f"offset {off}: {arquivo} mudou de altura com a panorâmica"
+            )
+
+
+def test_movel_some_quando_a_classe_nao_carrega_e_volta_quando_carrega(layouts):
+    """Sem o layouts.json o ambiente cai na camada procedural — nunca fica vazio."""
+    import json as _json
+    from PIL import Image as _Image
+
+    dims = {}
+    for name, meta in layouts["assets"].items():
+        with _Image.open(os.path.join(ASSETS, meta["file"])) as im:
+            dims[meta["file"]] = [im.width, im.height]
+
+    script = """
+    global.window = global;
+    global.document = { createElement: () => ({ getContext: () => null }) };
+    require(%(js)s);
+    const desenhos = [];
+    const grad = { addColorStop() {} };
+    const ctx = {
+      filter: 'none', globalAlpha: 1,
+      save() {}, restore() {}, translate() {}, scale() {}, beginPath() {}, closePath() {},
+      arc() {}, ellipse() {}, fill() {}, stroke() {}, fillRect() {}, strokeRect() {},
+      moveTo() {}, lineTo() {}, quadraticCurveTo() {}, arcTo() {}, clip() {}, rect() {},
+      createLinearGradient: () => grad, createRadialGradient: () => grad,
+      measureText: () => ({ width: 100 }), fillText() {},
+      drawImage() { desenhos.push('cutout'); },
+    };
+    // sem layout carregado
+    const semLayout = VVStaging.draw(ctx, 1280, 720, { room: 'sala', badge: false });
+    const cutoutsSemLayout = desenhos.length;
+
+    // agora com layout + imagens
+    const layouts = %(layouts)s;
+    const dims = %(dims)s;
+    VVStaging._setLayouts(layouts);
+    for (const name of Object.keys(layouts.assets)) {
+      VVStaging._setImage(layouts.assets[name].file,
+        { naturalWidth: dims[layouts.assets[name].file][0],
+          naturalHeight: dims[layouts.assets[name].file][1] });
+    }
+    desenhos.length = 0;
+    const comLayout = VVStaging.draw(ctx, 1280, 720, { room: 'sala', badge: false });
+    const cutoutsComLayout = desenhos.length;
+
+    // e um ambiente sem layout fotográfico (banheiro) continua procedural
+    desenhos.length = 0;
+    const banheiro = VVStaging.draw(ctx, 1280, 720, { room: 'banheiro', badge: false });
+
+    console.log(JSON.stringify({
+      semLayout: semLayout, cutoutsSemLayout: cutoutsSemLayout,
+      comLayout: comLayout, cutoutsComLayout: cutoutsComLayout,
+      banheiro: banheiro,
+    }));
+    """ % {"js": _json.dumps(STAGING_JS), "layouts": _json.dumps(layouts), "dims": _json.dumps(dims)}
+    res = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                         cwd=BASE_DIR, timeout=90)
+    assert res.returncode == 0, res.stderr
+    out = _json.loads(res.stdout.strip().splitlines()[-1])
+
+    # sem layout: desenha (procedural), mas nenhum cutout
+    assert out["semLayout"] is True and out["cutoutsSemLayout"] == 0
+    # com layout: desenha cutouts de verdade
+    assert out["comLayout"] is True
+    assert out["cutoutsComLayout"] == len(layouts["rooms"]["sala"]["placements"])
+    # banheiro não tem layout fotográfico: cai na procedural
+    assert out["banheiro"] is True
