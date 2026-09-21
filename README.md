@@ -55,8 +55,10 @@ video_vortex/
 │       ├── tour.js         # viewer com panorâmica 360° simulada
 │       ├── video.js        # render Ken Burns + MediaRecorder + trilha WebAudio + SRT
 │       └── demo.js         # fotos demo procedurais
+│   └── assets/             # cutouts de mobiliário (PNG com alpha) + raw/ originais
+├── tools/make_assets.py    # recorte fundo branco → PNG com alpha
 ├── data/                   # projetos salvos (projects.json)
-└── tests/test_api.py       # testes da API (pytest)
+└── tests/                  # testes da API e dos assets (pytest)
 ```
 
 ### API
@@ -69,6 +71,35 @@ video_vortex/
 | `GET` | `/api/projects/<id>` | recupera projeto completo |
 | `PUT` | `/api/projects/<id>` | atualiza projeto |
 | `DELETE` | `/api/projects/<id>` | exclui projeto |
+
+## 🪑 Assets de mobiliário (staging fotográfico)
+
+O staging compõe **cutouts fotográficos** (PNG com alpha) dentro do panorama. Se um
+PNG não existir, o código cai no **fallback procedural** — os assets são um upgrade
+visual, não um requisito.
+
+Os cutouts versionados em `static/assets/` são gerados a partir das fotos de produto
+em fundo branco guardadas em `static/assets/raw/`:
+
+```bash
+python tools/make_assets.py --preview   # recorta tudo + gera a prancha de conferência
+python tools/make_assets.py --only vase-decor
+```
+
+O pipeline estima a cor do fundo pela moldura da imagem, converte o desvio em alpha
+com rampa suave, remove ilhas soltas, desfaz o *spill* branco das bordas e recorta no
+conteúdo. Dois ajustes existem porque só aparecem na prática:
+
+| Ajuste | Para quê | Onde é usado |
+|--------|----------|--------------|
+| `--kill-shadows` | derruba a **sombra projetada** no chão (borrão cinza que denuncia a colagem) | `vase-decor` |
+| `--fill-holes` | tapa **buraco fechado** (o passe-partout branco de um quadro virava janela transparente) | `wall-art` |
+
+> **Confira olhando.** A prancha `static/assets/_preview.png` mostra cada cutout sobre
+> três fundos — cinza, madeira e **escuro**. Os fundos claros ficam de fora de
+> propósito: fundo branco esconde exatamente o defeito que se quer enxergar (halo
+> claro na borda). Os testes de `tests/test_assets.py` travam o resto (cantos
+> transparentes, nada de fundo colado na borda, cobertura plausível).
 
 ## 🧪 Testes
 
