@@ -13,7 +13,8 @@ Pipeline:
               ├─ 2. mede o desvio de cada pixel em relação ao fundo
               ├─ 3. converte esse desvio em alpha com rampa suave (antialias)
               ├─ 4. suprime ilhas soltas (respingo de compressão)
-              ├─ 5. [opcional] suprime sombra projetada no chão
+              ├─ 5. [opcional] suprime sombra projetada no chão (faixa de baixo
+              │                 + croma neutro + clara: ver suppress_shadows)
               ├─ 6. [opcional] preenche buracos fechados (ex.: passe-partout do quadro)
               ├─ 7. desfaz o *spill* branco das bordas (un-premultiply)
               ├─ 8. recorta no bounding box, limitando o maior lado
@@ -32,7 +33,8 @@ Ajuste fino (quando um asset sai com buraco, franja ou sombra sobrando):
 
     --low   0.045   # desvio abaixo disso = 100% transparente
     --high  0.150   # desvio acima disso = 100% opaco
-    --kill-shadows  # derruba sombra de chão (cinza claro, baixa saturação)
+    --kill-shadows  # derruba sombra de chão (neutra, clara, faixa de baixo)
+    --shadow-band 0.22 --shadow-tol 80   # ajuste fino dessa sombra
     --fill-holes    # torna opaco o que está cercado pelo objeto
 
 Dois detalhes que só aparecem na prática:
@@ -64,14 +66,25 @@ OUT_DIR = os.path.join(BASE_DIR, "static", "assets")
 # Ajuste por asset. Só entram aqui os que realmente precisam — o padrão cobre a
 # maioria dos casos. Nome = nome do arquivo sem extensão.
 PRESETS: dict[str, dict] = {
-    # a foto veio com sombra projetada no chão, que aparecia como borrão cinza
-    "vase-decor": {"kill_shadows": True},
+    # Band/tol medidos olhando o resultado sobre fundo escuro (o fundo claro
+    # esconde exatamente o defeito que se quer ver). Cada linha abaixo tinha
+    # sombra projetada visível na foto original.
+    "sofa": {"kill_shadows": True, "shadow_band": 0.22, "shadow_tol": 80.0},
+    "bed": {"kill_shadows": True, "shadow_band": 0.18, "shadow_tol": 30.0},
+    "vase-decor": {"kill_shadows": True, "shadow_band": 0.25, "shadow_tol": 40.0},
+    "table-lamp": {"kill_shadows": True, "shadow_band": 0.12, "shadow_tol": 30.0},
+    "dining-set": {"kill_shadows": True, "shadow_band": 0.12, "shadow_tol": 30.0},
+    "nightstand": {"kill_shadows": True, "shadow_band": 0.12, "shadow_tol": 30.0},
+    "plant": {"kill_shadows": True, "shadow_band": 0.10, "shadow_tol": 28.0},
     # quadro tem passe-partout branco cercado pela moldura: não pode furar
     "wall-art": {"fill_holes": True},
-    # lâmpada de mesa clara: derrubar sombra comeria a borda da cúpula,
-    # então NÃO ativa kill_shadows aqui (fica no padrão)
-    "table-lamp": {},
+    # poltrona bouclé clara: os pés claros moram na faixa de chão; o croma da
+    # lã e o teste de faixa seguram, mas a margem é pequena — fica no padrão
+    # (sem kill_shadows) para não arriscar comer o móvel.
+    "armchair": {},
 }
+
+SHADOW_LOSS_WARN = 0.08
 
 
 # --------------------------------------------------------------------- núcleo
@@ -116,27 +129,62 @@ def key_out(arr: np.ndarray, low: float, high: float, bg: np.ndarray) -> np.ndar
     return smoothstep(low, high, signal)
 
 
-def suppress_shadows(
-    alpha: np.ndarray, arr: np.ndarray, bg: np.ndarray, saturation: float = 26.0, keep: float = 0.94
-) -> np.ndarray:
-    """Derruba sombra projetada: acromática, clara e com alpha parcial.
+def floor_band(arr: np.ndarray, alpha: np.ndarray, band: float) -> np.ndarray:
+    """Máscara da faixa de baixo do OBJETO (não da imagem).
 
-    O teste é conservador de propósito — só age em pixel *sem cor*, *mais claro
-    que o objeto* e que **não** chegou a alpha cheio. Objeto colorido (madeira,
-    terracota) tem croma alto e nunca é atingido; objeto escuro (moldura preta)
-    falha no teste de claridade. Borda antialiasada do objeto também é poupada
-    porque herda o croma do objeto.
+    Delimitar pela bounding box do objeto — e não pela altura da imagem — é o que
+    impede que um vaso baixo ou uma mesa pequena virem "faixa de chão" inteira.
     """
-    chroma = arr.max(axis=2) - arr.min(axis=2)
+    ys, _ = np.where(alpha > 0.35)
+    if not len(ys):
+        return np.zeros_like(alpha, dtype=bool)
+    y0, y1 = int(ys.min()), int(ys.max())
+    top = int(y1 - band * max(1, y1 - y0))
+    mask = np.zeros_like(alpha, dtype=bool)
+    mask[top:, :] = True
+    return mask
+
+
+def suppress_shadows(
+    alpha: np.ndarray,
+    arr: np.ndarray,
+    bg: np.ndarray,
+    band: float = 0.20,
+    saturation: float = 8.0,
+    luma_tol: float = 35.0,
+) -> np.ndarray:
+    """Derruba a sombra projetada no chão, deixando o móvel intacto.
+
+    A sombra de uma foto de produto é inconfundível quando medida: **neutra**
+    (croma ~1, contra 26 no corpo do sofá, 53 na cúpula da luminária, 106 no
+    vaso) e **clara** (luma 190–236, contra 164 no corpo do sofá). E, claro,
+    fica na **faixa de baixo** do objeto.
+
+    Somados, os três testes são seguros justamente nos dois casos que quebravam
+    a abordagem ingênua ("alfa parcial + cor clara"):
+
+      * **edredom branco de cama** — claro e neutro, mas *não* está na faixa de
+        chão (é o meio do objeto), então o teste de faixa poupa;
+      * **corpo e braços do sofá** — estão na faixa de baixo, mas têm croma 26
+        (tecido bege), então o teste de croma poupa.
+
+    O que sobra de luz no que foi removido é reposto pela sombra de contato do
+    staging (ver `contactShadow` em static/js/staging.js).
+
+    Parâmetros por asset (ver PRESETS):
+      band    — fração da altura do objeto que conta como "perto do chão"
+      luma_tol — distância até a cor do fundo que ainda conta como sombra
+      saturation — croma abaixo disso é "neutro"
+    """
     luma = arr.mean(axis=2)
-    bg_luma = float(bg.mean())
+    chroma = arr.max(axis=2) - arr.min(axis=2)
 
-    achromatic = chroma < saturation
-    light = luma > (bg_luma - 46.0)
-    partial = alpha < 0.92
-
-    kill = achromatic & light & partial
-    return np.where(kill, alpha * (1.0 - keep), alpha)
+    kill = (
+        floor_band(arr, alpha, band)
+        & (chroma < saturation)
+        & (luma > (bg.mean() - luma_tol))
+    )
+    return np.where(kill, 0.0, alpha)
 
 
 def _label_outside(mask_free: np.ndarray) -> np.ndarray:
@@ -235,6 +283,8 @@ def process_one(
     max_side: int = 1400,
     kill_shadows: bool = False,
     do_fill_holes: bool = False,
+    shadow_tol: float = 35.0,
+    shadow_band: float = 0.20,
 ) -> dict:
     im = Image.open(src).convert("RGB")
     arr = np.asarray(im).astype(np.float32)
@@ -243,8 +293,14 @@ def process_one(
 
     alpha = key_out(arr, low, high, bg)
     alpha = despeckle(alpha)
+    warn = ""
     if kill_shadows:
-        alpha = suppress_shadows(alpha, arr, bg)
+        before = float(alpha.sum())
+        alpha = suppress_shadows(alpha, arr, bg, band=shadow_band, luma_tol=shadow_tol)
+        if before > 0:
+            lost = 1.0 - float(alpha.sum()) / before
+            if lost > SHADOW_LOSS_WARN:
+                warn = f"  ⚠ supressão de sombra removeu {lost:.1%} do alpha — revise"
     if do_fill_holes:
         alpha = fill_holes(alpha)
 
@@ -270,7 +326,22 @@ def process_one(
         "bg": tuple(int(v) for v in bg),
         "kb": os.path.getsize(dst) // 1024,
         "steps": ("shadow " if kill_shadows else "") + ("holes" if do_fill_holes else ""),
+        "warn": warn,
     }
+
+
+def shadow_loss(arr: np.ndarray, low: float, high: float, bg: np.ndarray,
+                band: float = 0.20, luma_tol: float = 35.0) -> float:
+    """Fração da massa de alpha que a supressão de sombra removeria.
+
+    Serve para decidir (e para travar em teste) se um asset aguenta ou não a
+    supressão: acima de ~8% o que está sumindo é o objeto, não a sombra.
+    """
+    alpha = despeckle(key_out(arr, low, high, bg))
+    before = float(alpha.sum())
+    if before <= 0:
+        return 0.0
+    return 1.0 - float(suppress_shadows(alpha, arr, bg, band=band, luma_tol=luma_tol).sum()) / before
 
 
 # ------------------------------------------------------------------ conferência
@@ -311,6 +382,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bg-color", default=None, help="fundo fixo 'r,g,b' em vez de estimado")
     ap.add_argument("--kill-shadows", action="store_true", help="força em todos os assets")
     ap.add_argument("--fill-holes", action="store_true", help="força em todos os assets")
+    ap.add_argument("--shadow-tol", type=float, default=None,
+                    help="força a tolerância de luminância da sombra (padrão 35)")
+    ap.add_argument("--shadow-band", type=float, default=None,
+                    help="força a faixa de chão do objeto (0..1, padrão 0.20)")
     ap.add_argument("--no-presets", action="store_true", help="ignora a tabela PRESETS")
     ap.add_argument("--preview", action="store_true", help="gera contact sheet de conferência")
     args = ap.parse_args(argv)
@@ -344,11 +419,16 @@ def main(argv: list[str] | None = None) -> int:
             args.max_side,
             kill_shadows=preset.get("kill_shadows", False) or args.kill_shadows,
             do_fill_holes=preset.get("fill_holes", False) or args.fill_holes,
+            shadow_tol=args.shadow_tol if args.shadow_tol is not None
+            else preset.get("shadow_tol", 35.0),
+            shadow_band=args.shadow_band if args.shadow_band is not None
+            else preset.get("shadow_band", 0.20),
         )
         done.append((name, os.path.join(args.out_dir, f"{name}.png")))
         print(
             f"{info['src']:<16} {info['size']:<11} {str(info['bg']):<15} "
             f"{info['coverage']:>6.1f}%  {info['steps'] or 'padrão'}  ({info['kb']}K)"
+            f"{info['warn']}"
         )
 
     if args.preview:
